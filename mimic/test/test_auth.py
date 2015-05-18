@@ -915,6 +915,48 @@ class GetEndpointsForTokenTests(SynchronousTestCase):
         self.assertEqual(json_body6["access"]["RAX-AUTH:impersonator"]["name"],
                          json_body1["access"]["user"]["name"])
 
+class ListUsersTests(SynchronousTestCase):
+    """
+    Tests for the /v2.0/users{?name,email} endpoint.
+    """
+    
+    def test_user_gets_own_info(self):
+        """
+        Users should be able to list account information about themselves.
+        """
+        core = MimicCore(Clock(), [])
+        root = MimicRoot(core).app.resource()
+
+        (response1, json_body1) = authenticate_with_username_password(self, core)
+        username = json_body1["access"]["user"]["name"]
+        tenant_id = json_body1["access"]["token"]["tenant"]["id"]
+        (response2, json_body2) = self.successResultOf(json_request(
+            self, root, "GET",
+            "http://mybase/identity/v2.0/users?name={0}".format(username)
+        ))
+        self.assertEqual(200, response2.code)
+        self.assertEqual(username, json_body2["user"]["username"])
+        self.assertEqual(tenant_id, json_body2["user"]["RAX-AUTH:domainId"])
+        self.assertEqual(username + '@example.com', json_body2["user"]["email"])
+        self.assertTrue(json_body2['user']['enabled'])
+
+    def test_other_user_gets_403(self):
+        """
+        Users get 403 Forbidden when listing someone else.
+        """
+        core = MimicCore(Clock(), [])
+        root = MimicRoot(core).app.resource()
+
+        (response1, json_body1) = authenticate_with_username_password(self, core)
+        username = json_body1["access"]["user"]["name"]
+        tenant_id = json_body1["access"]["token"]["tenant"]["id"]
+        (response2, json_body2) = self.successResultOf(json_request(
+            self, root, "GET",
+            "http://mybase/identity/v2.0/users?name=otheruser"
+        ))
+        self.assertEqual(403, response2.code)
+        self.assertEqual("Not Authorized", json_body2["forbidden"]["message"])
+
 
 class AuthIntegrationTests(SynchronousTestCase):
     """

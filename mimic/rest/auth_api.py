@@ -142,6 +142,17 @@ class AuthApi(object):
             return json.dumps({'itemNotFound':
                               {'code': 404, 'message': 'User ' + user_id + ' not found'}})
 
+    @app.route('/v2.0/users', methods=['GET'])
+    def get_user_info(self, request):
+        """
+        Lists users with detailed account information.
+        """
+        username = request.args.get('name')
+
+        request.setResponseCode(403)
+        return json.dumps({'forbidden': {
+            'code': 403, 'message': 'Not Authorized' } })
+
     @app.route('/v2.0/RAX-AUTH/impersonation-tokens', methods=['POST'])
     def get_impersonation_token(self, request):
         """
