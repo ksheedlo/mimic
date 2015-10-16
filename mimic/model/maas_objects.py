@@ -404,52 +404,6 @@ class Metric(object):
                 'data': self.get_value(**kwargs)}
 
 
-def _agent_metric(**kwargs):
-    """
-    Creates a new metric with an agent check type keying function.
-    """
-    return Metric(override_key=lambda **kw: (kw['entity_id'], kw['check_id']),
-                  **kwargs)
-
-
-def _remote_metric(**kwargs):
-    """
-    Creates a new metric with a remote check type keying function.
-    """
-    return Metric(
-        override_key=lambda **kw: (
-            kw['entity_id'],
-            kw['check_id'],
-            kw['monitoring_zone']),
-        **kwargs)
-
-
-def _single_host_info_metric(**kwargs):
-    """
-    Creates a new metric modeling an agent host info metric type.
-    """
-    return Metric(override_key=lambda **kw: (kw['entity_id'], kw['agent_id']),
-                  **kwargs)
-
-
-def _multi_host_info_metric(**kwargs):
-    """
-    Creates a new metric modeling an agent host info with multiple
-    return blocks.
-
-    For instance, the CPU host info generates a block of metrics for each CPU
-    on the host. Users may pin or override the values individually for each
-    block (each CPU in the CPU example). This requires that a block index be
-    incorporated into the metric override key.
-    """
-    return Metric(
-        override_key=lambda **kw: (
-            kw['entity_id'],
-            kw['agent_id'],
-            kw['block_index']),
-        **kwargs)
-
-
 @attributes(["metrics",
              Attribute("_clock"),
              Attribute("test_check_available", default_factory=dict),
@@ -585,6 +539,127 @@ class Agent(object):
                      for rtype in requested_types])
 
 
+@attributes([Attribute('_factory_fn'),
+             Attribute('_type', default_value=METRIC_TYPE_INTEGER),
+             Attribute('_unit', default_value=None),
+             Attribute('values', default_factory=list)])
+class MetricListBuilder(object):
+    """
+    Stateful builder for concisely creating a lot of metrics.
+    """
+    @classmethod
+    def agent_type(cls):
+        """
+        Creates a builder that builds agent metrics.
+        """
+        return cls(factory_fn=lambda **kwargs: Metric(
+            override_key=lambda **ikwargs: (ikwargs['entity_id'], ikwargs['check_id']),
+            **kwargs))
+
+    @classmethod
+    def remote_type(cls):
+        """
+        Creates a builder that builds remote metrics.
+        """
+        return cls(factory_fn=lambda **kwargs: Metric(
+            override_key=lambda **ikwargs: (
+                ikwargs['entity_id'],
+                ikwargs['check_id'],
+                ikwargs['monitoring_zone']),
+            **kwargs))
+
+    @classmethod
+    def single_host_info_type(cls):
+        """
+        Creates a builder for metrics that model an agent host info type.
+        """
+        return cls(factory_fn=lambda **kwargs: Metric(
+            override_key=lambda **ikwargs: (ikwargs['entity_id'], ikwargs['agent_id']),
+            **kwargs))
+
+    @classmethod
+    def multi_host_info_type(cls):
+        """
+        Creates a builder for metrics that model an agent host info with
+        multiple return blocks.
+
+        For instance, the CPU host info generates a block of metrics for each CPU
+        on the host. Users may pin or override the values individually for each
+        block (each CPU in the CPU example). This requires that a block index be
+        incorporated into the metric override key.
+        """
+        return cls(factory_fn=lambda **kwargs: Metric(
+            override_key=lambda **ikwargs: (ikwargs['entity_id'],
+                                            ikwargs['agent_id'],
+                                            ikwargs['block_index']),
+            **kwargs))
+
+    def percents(self):
+        """
+        Configures the builder to produce percent metrics.
+        """
+        self._type = METRIC_TYPE_NUMBER
+        self._unit = 'percent'
+        return self
+
+    def strings(self):
+        """
+        Configures the builder to produce string metrics.
+        """
+        self._type = METRIC_TYPE_STRING
+        self._unit = 'string'
+        return self
+
+    def bytes(self):
+        """
+        Configures the builder to produce byte metrics.
+        """
+        self._type = METRIC_TYPE_INTEGER
+        self._unit = 'bytes'
+        return self
+
+    def kilobytes(self):
+        """
+        Configures the builder to produce kilobyte metrics.
+        """
+        self._type = METRIC_TYPE_INTEGER
+        self._unit = 'kilobytes'
+        return self
+
+    def counts(self):
+        """
+        Configures the builder to produce count metrics.
+        """
+        self._type = METRIC_TYPE_INTEGER
+        self._unit = 'count'
+        return self
+
+    def types(self, typ):
+        """
+        Configures the type that will be used for built metrics.
+        """
+        self._type = typ
+        return self
+
+    def units(self, unit):
+        """
+        Configures the unit that will be used for built metrics.
+        """
+        self._unit = unit
+        return self
+
+    def metrics(self, *args):
+        """
+        Builds metrics and appends to self.values.
+        """
+        base_config = {'type': self._type}
+        if self._unit is not None:
+            base_config['unit'] = self._unit
+
+        self.values.extend([self._factory_fn(**dict(base_config, name=name)) for name in args])
+        return self
+
+
 class MaasStore(object):
     """
     A collection of MaaS configuration objects.
@@ -603,170 +678,101 @@ class MaasStore(object):
         self.alarm_states = []
 
         self.check_types = {
-            'agent.cpu': CheckType(clock=clock, metrics=[
-                _agent_metric(name='user_percent_average', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _agent_metric(name='wait_percent_average', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _agent_metric(name='sys_percent_average', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _agent_metric(name='idle_percent_average', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _agent_metric(name='irq_percent_average', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _agent_metric(name='usage_average', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _agent_metric(name='min_cpu_usage', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _agent_metric(name='max_cpu_usage', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _agent_metric(name='stolen_percent_average', type=METRIC_TYPE_NUMBER, unit='percent')]),
-            'agent.disk': CheckType(clock=clock, metrics=[
-                _agent_metric(name='queue', type=METRIC_TYPE_INTEGER),
-                _agent_metric(name='read_bytes', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='reads', type=METRIC_TYPE_INTEGER, unit='count'),
-                _agent_metric(name='rtime', type=METRIC_TYPE_INTEGER),
-                _agent_metric(name='wtime', type=METRIC_TYPE_INTEGER),
-                _agent_metric(name='write_bytes', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='writes', type=METRIC_TYPE_INTEGER, unit='count')]),
-            'agent.filesystem': CheckType(clock=clock, metrics=[
-                _agent_metric(name='avail', type=METRIC_TYPE_INTEGER, unit='kilobytes'),
-                _agent_metric(name='free', type=METRIC_TYPE_INTEGER, unit='kilobytes'),
-                _agent_metric(name='options', type=METRIC_TYPE_STRING, unit='string'),
-                _agent_metric(name='total', type=METRIC_TYPE_INTEGER, unit='kilobytes'),
-                _agent_metric(name='used', type=METRIC_TYPE_INTEGER, unit='kilobytes'),
-                _agent_metric(name='files', type=METRIC_TYPE_INTEGER, unit='count'),
-                _agent_metric(name='free_files', type=METRIC_TYPE_INTEGER, unit='count')]),
-            'agent.load_average': CheckType(clock=clock, metrics=[
-                _agent_metric(name='1m', type=METRIC_TYPE_NUMBER),
-                _agent_metric(name='5m', type=METRIC_TYPE_NUMBER),
-                _agent_metric(name='10m', type=METRIC_TYPE_NUMBER)]),
-            'agent.memory': CheckType(clock=clock, metrics=[
-                _agent_metric(name='actual_free', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='actual_used', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='free', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='ram', type=METRIC_TYPE_INTEGER, unit='megabytes'),
-                _agent_metric(name='swap_free', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='swap_page_in', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='swap_page_out', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='swap_total', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='swap_used', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='total', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='used', type=METRIC_TYPE_INTEGER, unit='bytes')]),
-            'agent.network': CheckType(clock=clock, metrics=[
-                _agent_metric(name='rx_bytes', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='rx_dropped', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='rx_errors', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='rx_packets', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='tx_bytes', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='tx_dropped', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='tx_errors', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _agent_metric(name='tx_packets', type=METRIC_TYPE_INTEGER, unit='bytes')]),
-            'remote.http': CheckType(clock=clock, metrics=[
-                _remote_metric(name='bytes', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _remote_metric(name='cert_end', type=METRIC_TYPE_INTEGER),
-                _remote_metric(name='cert_end_in', type=METRIC_TYPE_INTEGER),
-                _remote_metric(name='cert_error', type=METRIC_TYPE_STRING, unit='string'),
-                _remote_metric(name='cert_issuer', type=METRIC_TYPE_STRING, unit='string'),
-                _remote_metric(name='cert_start', type=METRIC_TYPE_INTEGER),
-                _remote_metric(name='cert_subject', type=METRIC_TYPE_STRING, unit='string'),
-                _remote_metric(name='cert_subject_alternative_names',
-                               type=METRIC_TYPE_STRING,
-                               unit='string'),
-                _remote_metric(name='code', type=METRIC_TYPE_STRING, unit='string'),
-                _remote_metric(name='duration', type=METRIC_TYPE_INTEGER),
-                _remote_metric(name='truncated', type=METRIC_TYPE_INTEGER, unit='bytes'),
-                _remote_metric(name='tt_connect', type=METRIC_TYPE_INTEGER),
-                _remote_metric(name='tt_firstbyte', type=METRIC_TYPE_INTEGER)]),
-            'remote.ping': CheckType(clock=clock, metrics=[
-                _remote_metric(name='available', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _remote_metric(name='average', type=METRIC_TYPE_NUMBER),
-                _remote_metric(name='count', type=METRIC_TYPE_INTEGER, unit='count'),
-                _remote_metric(name='maximum', type=METRIC_TYPE_NUMBER),
-                _remote_metric(name='minimum', type=METRIC_TYPE_NUMBER)])}
+            'agent.cpu': CheckType(
+                clock=clock, metrics=MetricListBuilder.agent_type()
+                .percents().metrics(
+                    'user_percent_average', 'wait_percent_average', 'sys_percent_average',
+                    'idle_percent_average', 'irq_percent_average', 'usage_average', 'min_cpu_usage',
+                    'max_cpu_usage', 'stolen_percent_average'
+                ).values),
+
+            'agent.disk': CheckType(
+                clock=clock, metrics=MetricListBuilder.agent_type()
+                .types(METRIC_TYPE_INTEGER).metrics('queue', 'rtime', 'wtime')
+                .bytes().metrics('read_bytes', 'write_bytes')
+                .counts().metrics('reads', 'writes').values),
+
+            'agent.filesystem': CheckType(
+                clock=clock, metrics=MetricListBuilder.agent_type()
+                .kilobytes().metrics('avail', 'free', 'total', 'used')
+                .counts().metrics('files', 'free_files')
+                .strings().metrics('options').values),
+
+            'agent.load_average': CheckType(
+                clock=clock, metrics=MetricListBuilder.agent_type()
+                .types(METRIC_TYPE_NUMBER).metrics('1m', '5m', '10m').values),
+
+            'agent.memory': CheckType(
+                clock=clock, metrics=MetricListBuilder.agent_type()
+                .bytes().metrics('actual_free', 'actual_used', 'free', 'swap_free', 'swap_page_in',
+                                 'swap_page_out', 'swap_total', 'swap_used', 'total', 'used')
+                .units('megabytes').metrics('ram').values),
+
+            'agent.network': CheckType(
+                clock=clock, metrics=MetricListBuilder.agent_type()
+                .bytes().metrics('rx_bytes', 'rx_dropped', 'rx_errors', 'rx_packets',
+                                 'tx_bytes', 'tx_dropped', 'tx_errors', 'tx_packets')
+                .values),
+
+            'remote.http': CheckType(
+                clock=clock, metrics=MetricListBuilder.remote_type()
+                .strings().metrics('cert_error', 'cert_issuer', 'cert_subject',
+                                   'cert_subject_alternative_names', 'code')
+                .bytes().metrics('bytes', 'truncated')
+                .types(METRIC_TYPE_INTEGER).units(None).metrics(
+                    'cert_end', 'cert_end_in', 'cert_start', 'duration', 'tt_connect', 'tt_firstbyte'
+                ).values),
+
+            'remote.ping': CheckType(
+                clock=clock, metrics=MetricListBuilder.remote_type()
+                .types(METRIC_TYPE_NUMBER).metrics('average', 'maximum', 'minimum')
+                .percents().metrics('available')
+                .counts().metrics('count').values)}
 
         self.host_info_types = {
-            'cpus': MultiHostInfoType(metrics=[
-                _multi_host_info_metric(name='idle', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='irq', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='mhz', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='model', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='name', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='soft_irq', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='stolen', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='sys', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='total', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='total_cores', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='user', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='vendor', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='wait', type=METRIC_TYPE_INTEGER)]),
-            'disks': MultiHostInfoType(metrics=[
-                _multi_host_info_metric(name='name', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='read_bytes', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='reads', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='rtime', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='time', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='write_bytes', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='writes', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='wtime', type=METRIC_TYPE_INTEGER)]),
-            'filesystems': MultiHostInfoType(metrics=[
-                _multi_host_info_metric(name='avail', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='dev_name', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='dir_name', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='files', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='free', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='free_files', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='options', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='sys_type_name', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='total', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='used', type=METRIC_TYPE_INTEGER)]),
-            'memory': SingleHostInfoType(metrics=[
-                _single_host_info_metric(name='actual_free', type=METRIC_TYPE_INTEGER),
-                _single_host_info_metric(name='actual_used', type=METRIC_TYPE_INTEGER),
-                _single_host_info_metric(name='free', type=METRIC_TYPE_INTEGER),
-                _single_host_info_metric(name='free_percent', type=METRIC_TYPE_NUMBER, unit='percent'),
-                _single_host_info_metric(name='ram', type=METRIC_TYPE_INTEGER),
-                _single_host_info_metric(name='total', type=METRIC_TYPE_INTEGER),
-                _single_host_info_metric(name='used', type=METRIC_TYPE_INTEGER),
-                _single_host_info_metric(name='used_percent', type=METRIC_TYPE_NUMBER, unit='percent')]),
-            'network_interfaces': MultiHostInfoType(metrics=[
-                _multi_host_info_metric(name='address', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='address6', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='broadcast', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='flags', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='hwaddr', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='mtu', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='name', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='netmask', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='rx_bytes', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='rx_packets', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='tx_bytes', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='tx_packets', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='type', type=METRIC_TYPE_STRING)]),
-            'processes': MultiHostInfoType(metrics=[
-                _multi_host_info_metric(name='cred_group', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='cred_user', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='exe_cwd', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='exe_name', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='exe_root', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='memory_major_faults', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='memory_minor_faults', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='memory_page_faults', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='memory_resident', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='memory_share', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='memory_size', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='pid', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='state_name', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='state_priority', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='state_threads', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='time_start_time', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='time_sys', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='time_total', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='time_user', type=METRIC_TYPE_INTEGER)]),
-            'system': SingleHostInfoType(metrics=[
-                _single_host_info_metric(name='arch', type=METRIC_TYPE_STRING),
-                _single_host_info_metric(name='name', type=METRIC_TYPE_STRING),
-                _single_host_info_metric(name='vendor', type=METRIC_TYPE_STRING),
-                _single_host_info_metric(name='vendor_name', type=METRIC_TYPE_STRING),
-                _single_host_info_metric(name='vendor_version', type=METRIC_TYPE_STRING),
-                _single_host_info_metric(name='version', type=METRIC_TYPE_STRING)]),
-            'who': MultiHostInfoType(metrics=[
-                _multi_host_info_metric(name='device', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='host', type=METRIC_TYPE_STRING),
-                _multi_host_info_metric(name='time', type=METRIC_TYPE_INTEGER),
-                _multi_host_info_metric(name='user', type=METRIC_TYPE_STRING)])}
+            'cpus': MultiHostInfoType(
+                metrics=MetricListBuilder.multi_host_info_type().types(METRIC_TYPE_INTEGER).metrics(
+                    'idle', 'irq', 'mhz', 'soft_irq', 'stolen', 'sys', 'total', 'total_cores',
+                    'user', 'wait')
+                .strings().metrics('model', 'name', 'vendor').values),
+
+            'disks': MultiHostInfoType(
+                metrics=MetricListBuilder.multi_host_info_type().types(METRIC_TYPE_INTEGER).metrics(
+                    'read_bytes', 'reads', 'rtime', 'time', 'write_bytes', 'writes', 'wtime')
+                .strings().metrics('name').values),
+
+            'filesystems': MultiHostInfoType(
+                metrics=MetricListBuilder.multi_host_info_type().types(METRIC_TYPE_INTEGER).metrics(
+                    'avail', 'files', 'free', 'free_files', 'total', 'used')
+                .strings().metrics('dev_name', 'dir_name', 'options', 'sys_type_name').values),
+
+            'memory': SingleHostInfoType(
+                metrics=MetricListBuilder.single_host_info_type().types(METRIC_TYPE_INTEGER).metrics(
+                    'actual_free', 'actual_used', 'free', 'ram', 'total', 'used')
+                .percents().metrics('free_percent', 'used_percent').values),
+
+            'network_interfaces': MultiHostInfoType(
+                metrics=MetricListBuilder.multi_host_info_type().strings().metrics(
+                    'address', 'address6', 'broadcast', 'hwaddr', 'name', 'netmask', 'type')
+                .types(METRIC_TYPE_INTEGER).units(None).metrics(
+                    'flags', 'mtu', 'rx_bytes', 'rx_packets', 'tx_bytes', 'tx_packets').values),
+
+            'processes': MultiHostInfoType(
+                metrics=MetricListBuilder.multi_host_info_type().types(METRIC_TYPE_INTEGER).metrics(
+                    'memory_major_faults', 'memory_minor_faults', 'memory_page_faults',
+                    'memory_resident', 'memory_share', 'memory_size', 'pid', 'state_priority',
+                    'state_threads', 'time_start_time', 'time_sys', 'time_total', 'time_user')
+                .strings().metrics('cred_group', 'cred_user', 'exe_cwd', 'exe_name',
+                                   'exe_root', 'state_name').values),
+
+            'system': SingleHostInfoType(
+                metrics=MetricListBuilder.single_host_info_type().strings().metrics(
+                    'arch', 'name', 'vendor', 'vendor_name', 'vendor_version', 'version').values),
+
+            'who': MultiHostInfoType(
+                metrics=MetricListBuilder.multi_host_info_type()
+                .strings().metrics('device', 'host', 'user')
+                .types(METRIC_TYPE_INTEGER).units(None).metrics('time').values)}
 
     def latest_alarm_states_for_entity(self, entity_id):
         """
